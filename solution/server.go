@@ -5,8 +5,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"sort"
 	"strconv"
 	"time"
@@ -36,7 +38,7 @@ type User struct {
 	Email       string `json:"email"`
 	Password    string `json:"password"`
 	CountryCode string `json:"countryCode"`
-	IsPublic    *bool  `json:"isPublic"`
+	IsPublic    string `json:"isPublic"`
 	Phone       string `json:"phone,omitempty"`
 	Image       string `json:"image,omitempty"`
 }
@@ -44,7 +46,7 @@ type ResponseUser struct {
 	Login       string `json:"login"`
 	Email       string `json:"email"`
 	CountryCode string `json:"countryCode"`
-	IsPublic    *bool  `json:"isPublic"`
+	IsPublic    string `json:"isPublic"`
 	Phone       string `json:"phone,omitempty"`
 	Image       string `json:"image,omitempty"`
 }
@@ -103,7 +105,7 @@ func NewServer(address string, logger *slog.Logger, db *sqlx.DB) *Server {
 
 func (s *Server) Start() error {
 	// таблица пользователей
-	query := "create table if not exists users4 (id serial, login text, password text, email text, countryCode text, isPublic boolean, phone text, image text);"
+	query := "create table if not exists users5 (id serial, login text, password text, email text, countryCode text, isPublic text, phone text, image text);"
 	_, err4 := s.db.Exec(query)
 	if err4 != nil {
 		fmt.Println(err4)
@@ -151,6 +153,7 @@ func (s *Server) Start() error {
 	router.HandleFunc("/api/posts/feed/my", s.handleGetMyFeed).Methods("GET")
 	router.HandleFunc("/api/posts/feed/{login}", s.handleGetUserFeed).Methods("GET")
 	router.HandleFunc("/api/posts/{postId}/like", s.handleLikePost).Methods("POST")
+	router.HandleFunc("/api/upload", s.handleUploadImage).Methods("POST")
 
 	s.logger.Info("server has been started", "address", s.address)
 
@@ -290,7 +293,7 @@ func ValidatePhone(phone string) bool {
 	return (cnt <= 1 && phone[0] == '+' && len(phone) >= 1)
 }
 func ValidateImgLink(imglink string) bool {
-	return ((len(imglink) <= 200 && len(imglink) >= 1) || len(imglink) == 0)
+	return len(imglink) == 0
 }
 func (s *Server) ValidateToken(Token string) bool {
 	var exists bool
@@ -304,25 +307,31 @@ func (s *Server) ValidateToken(Token string) bool {
 }
 func (s *Server) handleRegisterUser(w http.ResponseWriter, r *http.Request) {
 	var user User
-	err := json.NewDecoder(r.Body).Decode(&user)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(`{"reason": "error"}`))
-		return
+	query1 := r.URL.Query()
+	user.Login = query1.Get("login")
+	user.Email = query1.Get("email")
+	user.Password = query1.Get("password")
+	user.CountryCode = query1.Get("countryCode")
+	user.IsPublic = query1.Get("isPublic")
+	user.Phone = query1.Get("phone")
+	rphone := []rune(user.Phone)
+	if rphone[0] == ' ' {
+		rphone[0] = '+'
 	}
+	user.Phone = string(rphone)
 	fmt.Println(ValidateEmail(user.Email), ValidateLogin(user.Login), ValidateImgLink(user.Image), ValidatePassword(user.Password), ValidatePhone(user.Phone))
 	if !ValidateEmail(user.Email) || !ValidateLogin(user.Login) || !ValidateImgLink(user.Image) || !ValidatePassword(user.Password) || !ValidatePhone(user.Phone) {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(`{"reason": "error"}`))
 		return
 	}
-	fmt.Println(user.Login)
+	// fmt.Println(user.Login)
 	hash := sha512.Sum512([]byte(user.Login + user.Password))
 	hashedPassword := hex.EncodeToString(hash[:])
 
 	var exists bool
 
-	query := "select exists(select 1 from users4 where login=$1)"
+	query := "select exists(select 1 from users5 where login=$1)"
 	err228 := s.db.QueryRow(query, user.Login).Scan(&exists)
 	if err228 != nil {
 		fmt.Println("error while check")
@@ -332,7 +341,7 @@ func (s *Server) handleRegisterUser(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"reason": "exists"}`))
 		return
 	}
-	query = "select exists(select 1 from users4 where email=$1)"
+	query = "select exists(select 1 from users5 where email=$1)"
 	err228 = s.db.QueryRow(query, user.Email).Scan(&exists)
 	if err228 != nil {
 		fmt.Println("error while check")
@@ -342,7 +351,7 @@ func (s *Server) handleRegisterUser(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"reason": "exists"}`))
 		return
 	}
-	query = "select exists(select 1 from users4 where phone=$1)"
+	query = "select exists(select 1 from users5 where phone=$1)"
 	err228 = s.db.QueryRow(query, user.Phone).Scan(&exists)
 	if err228 != nil {
 		fmt.Println("error while check")
@@ -352,9 +361,32 @@ func (s *Server) handleRegisterUser(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"reason": "exists"}`))
 		return
 	}
-	// fmt.Println(hashedPassword)
+	// -------------------------------------------
+	file, header, err := r.FormFile("image")
+	if err != nil {
+		fmt.Println(err)
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"reason": "error"}`))
+		return
+	}
+	defer file.Close()
+	newFile, err := os.Create("./images/" + header.Filename)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"reason": "error"}`))
+		return
+	}
+	defer newFile.Close()
+	_, err = io.Copy(newFile, file)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"reason": "error"}`))
+		return
+	}
+	user.Image = "./images/" + header.Filename
+	// -------------------------------------------------
 	fmt.Println(user.Login)
-	query = "insert into users4 values(default, $1, $2, $3, $4, $5, $6, $7);"
+	query = "insert into users5 values(default, $1, $2, $3, $4, $5, $6, $7);"
 	_, err2 := s.db.Exec(query, user.Login, hashedPassword, user.Email, user.CountryCode, user.IsPublic, user.Phone, user.Image)
 	if err2 != nil {
 		fmt.Println("error while insert into db", err2)
@@ -399,7 +431,7 @@ func (s *Server) handleSignIn(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var exists bool
-	query := "select exists(select 1 from users4 where login=$1)"
+	query := "select exists(select 1 from users5 where login=$1)"
 	err228 := s.db.QueryRow(query, user.Login).Scan(&exists)
 	if err228 != nil {
 		fmt.Println("error while check")
@@ -410,7 +442,7 @@ func (s *Server) handleSignIn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var InputPassword string
-	err3 := s.db.QueryRow("select password from users4 where login=$1", user.Login).Scan(&InputPassword)
+	err3 := s.db.QueryRow("select password from users5 where login=$1", user.Login).Scan(&InputPassword)
 	if err3 != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(`{"reason": "error while get user from db"}`))
@@ -470,7 +502,7 @@ func (s *Server) GetProfile(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		var users []ResponseUser
 		// user.Login = login
-		q := "select login, email, countryCode, isPublic, phone, image from users4 where login=$1"
+		q := "select login, email, countryCode, isPublic, phone, image from users5 where login=$1"
 		row, err2 := s.db.Query(q, login)
 		if err2 != nil {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -488,12 +520,37 @@ func (s *Server) GetProfile(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(TokenJson))
 	case http.MethodPatch:
 		var user User
-		err1 := json.NewDecoder(r.Body).Decode(&user)
-		if err1 != nil {
+		query1 := r.URL.Query()
+		user.CountryCode = query1.Get("countryCode")
+		user.IsPublic = query1.Get("isPublic")
+		user.Phone = query1.Get("phone")
+		rphone := []rune(user.Phone)
+		if len(rphone) > 0 && rphone[0] == ' ' {
+			rphone[0] = '+'
+		}
+		user.Phone = string(rphone)
+		file, header, err := r.FormFile("image")
+		if err != nil {
+			fmt.Println(err)
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte(`{"reason": "error"}`))
+			return
+		}
+		defer file.Close()
+		newFile, err := os.Create("./images/" + header.Filename)
+		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			w.Write([]byte(`{"reason": "error"}`))
 			return
 		}
+		defer newFile.Close()
+		_, err = io.Copy(newFile, file)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(`{"reason": "error"}`))
+			return
+		}
+		user.Image = "./images/" + header.Filename
 		if user.CountryCode != "" {
 			var exists bool
 			query := "select exists(select 1 from countries where alpha2=$1)"
@@ -508,7 +565,7 @@ func (s *Server) GetProfile(w http.ResponseWriter, r *http.Request) {
 				w.Write([]byte(`{"reason": "error"}`))
 				return
 			}
-			q := "update users4 set countryCode=$1 where login=$2;"
+			q := "update users5 set countryCode=$1 where login=$2;"
 			_, err2 := s.db.Exec(q, user.CountryCode, login)
 			if err2 != nil {
 				w.WriteHeader(http.StatusInternalServerError)
@@ -516,13 +573,9 @@ func (s *Server) GetProfile(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		fmt.Println(user.Image)
 		if user.Image != "" {
-			if !ValidateImgLink(user.Image) {
-				w.WriteHeader(http.StatusBadRequest)
-				w.Write([]byte(`{"reason": "error"}`))
-				return
-			}
-			q := "update users4 set image=$1 where login=$2;"
+			q := "update users5 set image=$1 where login=$2;"
 			_, err2 := s.db.Exec(q, user.Image, login)
 			if err2 != nil {
 				w.WriteHeader(http.StatusInternalServerError)
@@ -537,7 +590,7 @@ func (s *Server) GetProfile(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			var exists bool
-			query := "select exists(select 1 from users4 where phone=$1 and login != $2)"
+			query := "select exists(select 1 from users5 where phone=$1 and login != $2)"
 			err228 := s.db.QueryRow(query, user.Phone, login).Scan(&exists)
 			if err228 != nil {
 				fmt.Println(1)
@@ -550,7 +603,7 @@ func (s *Server) GetProfile(w http.ResponseWriter, r *http.Request) {
 				w.Write([]byte(`{"reason": "error"}`))
 				return
 			}
-			q := "update users4 set phone=$1 where login=$2;"
+			q := "update users5 set phone=$1 where login=$2;"
 			_, err2 := s.db.Exec(q, user.Phone, login)
 			if err2 != nil {
 				fmt.Println(err2)
@@ -559,10 +612,9 @@ func (s *Server) GetProfile(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		if user.IsPublic != nil {
-
-			q := "update users4 set isPublic=$1 where login=$2;"
-			_, err2 := s.db.Exec(q, *user.IsPublic, login)
+		if user.IsPublic != "" {
+			q := "update users5 set isPublic=$1 where login=$2;"
+			_, err2 := s.db.Exec(q, user.IsPublic, login)
 			if err2 != nil {
 				w.WriteHeader(http.StatusInternalServerError)
 				w.Write([]byte(`{"reason": "error"}`))
@@ -570,7 +622,7 @@ func (s *Server) GetProfile(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		var users []ResponseUser
-		q := "select login, email, countryCode, isPublic, phone, image from users4 where login=$1"
+		q := "select login, email, countryCode, isPublic, phone, image from users5 where login=$1"
 		row, err2 := s.db.Query(q, login)
 		if err2 != nil {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -586,7 +638,6 @@ func (s *Server) GetProfile(w http.ResponseWriter, r *http.Request) {
 		TokenJson, _ := json.Marshal(users[0])
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(TokenJson))
-		w.WriteHeader(http.StatusOK)
 	}
 }
 func (s *Server) handleGetUserByLogin(w http.ResponseWriter, r *http.Request) {
@@ -624,7 +675,7 @@ func (s *Server) handleGetUserByLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var user []ResponseUser
-	q := "select login, email, countryCode, isPublic, phone, image from users4 where login=$1"
+	q := "select login, email, countryCode, isPublic, phone, image from users5 where login=$1"
 	row, err1 := s.db.Query(q, loginInput)
 	if err1 != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -640,13 +691,12 @@ func (s *Server) handleGetUserByLogin(w http.ResponseWriter, r *http.Request) {
 	if login == loginInput {
 		json.NewEncoder(w).Encode(user[0])
 		return
-	} else if *user[0].IsPublic {
+	} else if user[0].IsPublic == "" {
 		json.NewEncoder(w).Encode(user[0])
 		return
 	}
 	w.WriteHeader(http.StatusForbidden)
 	w.Write([]byte(`{"reason": "error"}`))
-	return
 }
 func (s *Server) handleUpdPassword(w http.ResponseWriter, r *http.Request) {
 	tokenString := r.Header.Get("Authorization")
@@ -691,7 +741,7 @@ func (s *Server) handleUpdPassword(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"reason": "error"}`))
 		return
 	}
-	query = "select password from users4 where login=$1"
+	query = "select password from users5 where login=$1"
 	var HashedPasswordFromDb string
 	err3 := s.db.QueryRow(query, login).Scan(&HashedPasswordFromDb)
 	if err3 != nil {
@@ -727,7 +777,7 @@ func (s *Server) handleUpdPassword(w http.ResponseWriter, r *http.Request) {
 	}
 	hash = sha512.Sum512([]byte(login + NewPassword))
 	hashedNewPassword := hex.EncodeToString(hash[:])
-	query = "update users4 set password=$1 where login=$2"
+	query = "update users5 set password=$1 where login=$2"
 	_, err5 := s.db.Exec(query, hashedNewPassword, login)
 	if err5 != nil {
 		// fmt.Println(7)
@@ -769,7 +819,7 @@ func (s *Server) handleFriendAdd(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var exists bool
-	query := "select exists(select 1 from users4 where login=$1)"
+	query := "select exists(select 1 from users5 where login=$1)"
 	err228 := s.db.QueryRow(query, FriendLogin.Login).Scan(&exists)
 	if err228 != nil {
 		fmt.Println("error while check", err228)
@@ -1090,7 +1140,7 @@ func (s *Server) handleGetPost(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(posts[0])
 		return
 	}
-	query = "select isPublic from users4 where login=$1"
+	query = "select isPublic from users5 where login=$1"
 	var is_public bool
 	err = s.db.QueryRow(query, posts[0].Author).Scan(&is_public)
 	if err != nil {
@@ -1250,7 +1300,7 @@ func (s *Server) handleGetUserFeed(w http.ResponseWriter, r *http.Request) {
 	}
 	fmt.Println(user.Login)
 	var exists bool
-	query := "select exists(select 1 from users4 where login=$1)"
+	query := "select exists(select 1 from users5 where login=$1)"
 	err228 := s.db.QueryRow(query, user.Login).Scan(&exists)
 	if err228 != nil {
 		fmt.Println(err228)
@@ -1291,7 +1341,7 @@ func (s *Server) handleGetUserFeed(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(posts)
 		return
 	}
-	query = "select isPublic from users4 where login=$1"
+	query = "select isPublic from users5 where login=$1"
 	var is_public bool
 	err228 = s.db.QueryRow(query, user.Login).Scan(&is_public)
 	if err228 != nil {
@@ -1361,7 +1411,7 @@ func (s *Server) handleLikePost(w http.ResponseWriter, r *http.Request) {
 	if exists {
 		sperm = true
 	}
-	query = "select isPublic from users4 where login=$1"
+	query = "select isPublic from users5 where login=$1"
 	var IsPublic bool
 	err = s.db.QueryRow(query, UserLogin).Scan(&IsPublic)
 	if err != nil {
@@ -1464,11 +1514,34 @@ func (s *Server) handleLikePost(w http.ResponseWriter, r *http.Request) {
 			query = "update posts2 set likes=$1 dislikes=$2 where id=$3"
 			_, err = s.db.Exec(query, countLikes+1, countDislikes-1, PostId)
 			if err != nil {
-				fmt.Println(7)
 				w.WriteHeader(http.StatusInternalServerError)
 				w.Write([]byte(`{"reason": "error"}`))
 				return
 			}
 		}
+	}
+}
+func (s *Server) handleUploadImage(w http.ResponseWriter, r *http.Request) {
+	file, header, err := r.FormFile("image")
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"reason": "error"}`))
+		return
+	}
+	defer file.Close()
+	newFile, err := os.Create("./images/" + header.Filename)
+	if err != nil {
+		fmt.Println(1)
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"reason": "error"}`))
+		return
+	}
+	defer newFile.Close()
+	_, err = io.Copy(newFile, file)
+	if err != nil {
+		fmt.Println(2)
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"reason": "error"}`))
+		return
 	}
 }
