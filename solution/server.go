@@ -530,27 +530,32 @@ func (s *Server) GetProfile(w http.ResponseWriter, r *http.Request) {
 		}
 		user.Phone = string(rphone)
 		file, header, err := r.FormFile("image")
-		if err != nil {
+		if err != nil && file != nil {
 			fmt.Println(err)
 			w.WriteHeader(http.StatusBadRequest)
 			w.Write([]byte(`{"reason": "error"}`))
 			return
 		}
-		defer file.Close()
-		newFile, err := os.Create("./images/" + header.Filename)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			w.Write([]byte(`{"reason": "error"}`))
-			return
+		if file == nil {
+			user.Image = ""
 		}
-		defer newFile.Close()
-		_, err = io.Copy(newFile, file)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			w.Write([]byte(`{"reason": "error"}`))
-			return
+		if file != nil {
+			defer file.Close()
+			newFile, err := os.Create("./images/" + header.Filename)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				w.Write([]byte(`{"reason": "error"}`))
+				return
+			}
+			defer newFile.Close()
+			_, err = io.Copy(newFile, file)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				w.Write([]byte(`{"reason": "error"}`))
+				return
+			}
+			user.Image = "./images/" + header.Filename
 		}
-		user.Image = "./images/" + header.Filename
 		if user.CountryCode != "" {
 			var exists bool
 			query := "select exists(select 1 from countries where alpha2=$1)"
