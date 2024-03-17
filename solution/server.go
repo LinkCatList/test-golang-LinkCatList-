@@ -314,18 +314,15 @@ func (s *Server) handleRegisterUser(w http.ResponseWriter, r *http.Request) {
 	user.CountryCode = query1.Get("countryCode")
 	user.IsPublic = query1.Get("isPublic")
 	user.Phone = query1.Get("phone")
-	rphone := []rune(user.Phone)
-	if rphone[0] == ' ' {
-		rphone[0] = '+'
-	}
-	user.Phone = string(rphone)
+
+	// fmt.Println(user.Phone)
 	fmt.Println(ValidateEmail(user.Email), ValidateLogin(user.Login), ValidateImgLink(user.Image), ValidatePassword(user.Password), ValidatePhone(user.Phone))
 	if !ValidateEmail(user.Email) || !ValidateLogin(user.Login) || !ValidateImgLink(user.Image) || !ValidatePassword(user.Password) || !ValidatePhone(user.Phone) {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(`{"reason": "error"}`))
 		return
 	}
-	// fmt.Println(user.Login)
+
 	hash := sha512.Sum512([]byte(user.Login + user.Password))
 	hashedPassword := hex.EncodeToString(hash[:])
 
@@ -1549,4 +1546,5 @@ func (s *Server) handleUploadImage(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"reason": "error"}`))
 		return
 	}
+
 }
