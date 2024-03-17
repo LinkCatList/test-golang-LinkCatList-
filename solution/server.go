@@ -367,7 +367,11 @@ func (s *Server) handleRegisterUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer file.Close()
-	newFile, err := os.Create("./images/" + header.Filename)
+
+	hash = sha512.Sum512([]byte(header.Filename + user.Password))
+	hashedPath := hex.EncodeToString(hash[:])
+
+	newFile, err := os.Create("./images/" + hashedPath + ".png")
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(`{"reason": "error"}`))
@@ -380,7 +384,8 @@ func (s *Server) handleRegisterUser(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"reason": "error"}`))
 		return
 	}
-	user.Image = "./images/" + header.Filename
+
+	user.Image = "./images/" + hashedPath + ".png"
 	// -------------------------------------------------
 	fmt.Println(user.Login)
 	query = "insert into users5 values(default, $1, $2, $3, $4, $5, $6, $7);"
@@ -538,7 +543,9 @@ func (s *Server) GetProfile(w http.ResponseWriter, r *http.Request) {
 		}
 		if file != nil {
 			defer file.Close()
-			newFile, err := os.Create("./images/" + header.Filename)
+			hash := sha512.Sum512([]byte(header.Filename + user.Password))
+			hashedPath := hex.EncodeToString(hash[:])
+			newFile, err := os.Create("./images/" + hashedPath + ".png")
 			if err != nil {
 				w.WriteHeader(http.StatusInternalServerError)
 				w.Write([]byte(`{"reason": "error"}`))
@@ -551,7 +558,7 @@ func (s *Server) GetProfile(w http.ResponseWriter, r *http.Request) {
 				w.Write([]byte(`{"reason": "error"}`))
 				return
 			}
-			user.Image = "./images/" + header.Filename
+			user.Image = "./images/" + hashedPath + ".png"
 		}
 		if user.CountryCode != "" {
 			var exists bool
