@@ -1574,7 +1574,7 @@ func (s *Server) handleDislikePost(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"reason": "error"}`))
 		return
 	}
-	sperm := false // может ли чувак поставить лайк
+	sperm := false // может ли чувак поставить дизлайк
 	var exists bool
 	query = "select exists(select 1 from friends3 where login1=$1 and login2=$2)"
 	err228 := s.db.QueryRow(query, UserLogin, login).Scan(&exists)
