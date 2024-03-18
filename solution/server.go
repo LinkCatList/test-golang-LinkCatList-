@@ -153,7 +153,6 @@ func (s *Server) Start() error {
 	router.HandleFunc("/api/posts/feed/my", s.handleGetMyFeed).Methods("GET")
 	router.HandleFunc("/api/posts/feed/{login}", s.handleGetUserFeed).Methods("GET")
 	router.HandleFunc("/api/posts/{postId}/like", s.handleLikePost).Methods("POST")
-	router.HandleFunc("/api/upload", s.handleUploadImage).Methods("POST")
 
 	s.logger.Info("server has been started", "address", s.address)
 
@@ -1041,8 +1040,6 @@ func (s *Server) handleNewPost(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"reason": "error"}`))
 		return
 	}
-	hash := sha512.Sum512([]byte(login + Post.Content))
-	hashedId := hex.EncodeToString(hash[:])
 
 	currentTime := time.Now()
 	str, _ := currentTime.MarshalJSON()
@@ -1050,6 +1047,10 @@ func (s *Server) handleNewPost(w http.ResponseWriter, r *http.Request) {
 	rs[len(str)-7] = 'Z'
 	str = []byte(string(rs))
 	rfc3339Time := string(str)[1 : len(str)-1]
+
+	hash := sha512.Sum512([]byte(string(rs) + Post.Content))
+	hashedId := hex.EncodeToString(hash[:])
+
 	hashedId = hashedId[:90]
 	query := "insert into posts2 values ($1, $2, $3, $4, $5, 0, 0);"
 	_, err = s.db.Exec(query, hashedId, login, Post.Content, pq.Array(Post.Tags), rfc3339Time)
@@ -1412,7 +1413,6 @@ func (s *Server) handleLikePost(w http.ResponseWriter, r *http.Request) {
 	query = "select exists(select 1 from friends3 where login1=$1 and login2=$2)"
 	err228 := s.db.QueryRow(query, UserLogin, login).Scan(&exists)
 	if err228 != nil {
-		fmt.Println(1)
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(`{"reason": "error"}`))
 		return
@@ -1424,7 +1424,6 @@ func (s *Server) handleLikePost(w http.ResponseWriter, r *http.Request) {
 	var IsPublic bool
 	err = s.db.QueryRow(query, UserLogin).Scan(&IsPublic)
 	if err != nil {
-		fmt.Println(2)
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(`{"reason": "error"}`))
 		return
@@ -1435,7 +1434,6 @@ func (s *Server) handleLikePost(w http.ResponseWriter, r *http.Request) {
 	query = "select exists(select 1 from posts2 where id=$1)"
 	err228 = s.db.QueryRow(query, PostId).Scan(&exists)
 	if err228 != nil {
-		fmt.Println(3)
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(`{"reason": "error"}`))
 		return
@@ -1529,29 +1527,4 @@ func (s *Server) handleLikePost(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-}
-func (s *Server) handleUploadImage(w http.ResponseWriter, r *http.Request) {
-	file, header, err := r.FormFile("image")
-	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(`{"reason": "error"}`))
-		return
-	}
-	defer file.Close()
-	newFile, err := os.Create("./images/" + header.Filename)
-	if err != nil {
-		fmt.Println(1)
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(`{"reason": "error"}`))
-		return
-	}
-	defer newFile.Close()
-	_, err = io.Copy(newFile, file)
-	if err != nil {
-		fmt.Println(2)
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(`{"reason": "error"}`))
-		return
-	}
-
 }
