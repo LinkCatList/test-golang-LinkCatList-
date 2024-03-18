@@ -153,6 +153,7 @@ func (s *Server) Start() error {
 	router.HandleFunc("/api/posts/feed/my", s.handleGetMyFeed).Methods("GET")
 	router.HandleFunc("/api/posts/feed/{login}", s.handleGetUserFeed).Methods("GET")
 	router.HandleFunc("/api/posts/{postId}/like", s.handleLikePost).Methods("POST")
+	router.HandleFunc("/api/posts/{postId}/dislike", s.handleDislikePost).Methods("POST")
 
 	s.logger.Info("server has been started", "address", s.address)
 
@@ -1497,7 +1498,7 @@ func (s *Server) handleLikePost(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !reaction {
-			query = "update reactions set reaction=1 where login=$1 and postId=$2"
+			query = "update reactions set reaction=true where login=$1 and postId=$2"
 			_, err = s.db.Exec(query, login, PostId)
 			if err != nil {
 				fmt.Println(5)
@@ -1518,9 +1519,176 @@ func (s *Server) handleLikePost(w http.ResponseWriter, r *http.Request) {
 			for rows.Next() {
 				rows.Scan(&countLikes, &countDislikes)
 			}
-			query = "update posts2 set likes=$1 dislikes=$2 where id=$3"
+			query = "update posts2 set likes=$1, dislikes=$2 where id=$3"
+			fmt.Println("ok")
 			_, err = s.db.Exec(query, countLikes+1, countDislikes-1, PostId)
 			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				w.Write([]byte(`{"reason": "error"}`))
+				return
+			}
+		}
+	}
+}
+func (s *Server) handleDislikePost(w http.ResponseWriter, r *http.Request) {
+	PostId, ok := mux.Vars(r)["postId"]
+	if !ok {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"reason": "error"}`))
+		return
+	}
+
+	tokenString := r.Header.Get("Authorization")
+	if tokenString == "" {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"reason": "error"}`))
+		return
+	}
+	token, err := jwt.Parse(tokenString[7:], func(token *jwt.Token) (interface{}, error) {
+		return []byte(signingKey), nil
+	})
+	if err != nil || !token.Valid || !s.ValidateToken(tokenString[7:]) {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"reason": "error"}`))
+		return
+	}
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"reason": "error"}`))
+		return
+	}
+	login, ok := claims["login"].(string)
+	if !ok {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"reason": "error"}`))
+		return
+	}
+
+	query := "select login from posts2 where id=$1"
+	var UserLogin string
+	err = s.db.QueryRow(query, PostId).Scan(&UserLogin)
+	if err != nil {
+		fmt.Println(err)
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"reason": "error"}`))
+		return
+	}
+	sperm := false // может ли чувак поставить лайк
+	var exists bool
+	query = "select exists(select 1 from friends3 where login1=$1 and login2=$2)"
+	err228 := s.db.QueryRow(query, UserLogin, login).Scan(&exists)
+	if err228 != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"reason": "error"}`))
+		return
+	}
+	if exists {
+		sperm = true
+	}
+	query = "select isPublic from users5 where login=$1"
+	var IsPublic bool
+	err = s.db.QueryRow(query, UserLogin).Scan(&IsPublic)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"reason": "error"}`))
+		return
+	}
+	if IsPublic {
+		sperm = true
+	}
+	query = "select exists(select 1 from posts2 where id=$1)"
+	err228 = s.db.QueryRow(query, PostId).Scan(&exists)
+	if err228 != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"reason": "error"}`))
+		return
+	}
+	if !exists {
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(`{"reason": "error"}`))
+		return
+	}
+	if !sperm {
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(`{"reason": "error"}`))
+		return
+	}
+	query = "select exists(select 1 from reactions where login=$1)"
+	err228 = s.db.QueryRow(query, login).Scan(&exists)
+	if err228 != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"reason": "error"}`))
+		return
+	}
+	fmt.Println(exists)
+	if !exists {
+		query = "insert into reactions (login, postId, reaction) values ($1, $2, true);"
+		_, err = s.db.Exec(query, login, PostId)
+		if err != nil {
+			fmt.Println(err)
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(`{"reason": "error"}`))
+			return
+		}
+		query = "select likes, dislikes from posts2 where id=$1"
+		rows, err := s.db.Query(query, PostId)
+		if err != nil {
+			fmt.Println(6)
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(`{"reason": "error"}`))
+			return
+		}
+		countLikes := 0
+		countDislikes := 0
+		for rows.Next() {
+			rows.Scan(&countLikes, &countDislikes)
+		}
+		query = "update posts2 set dislikes=$1 where id=$2"
+		_, err = s.db.Exec(query, countDislikes+1, PostId)
+		if err != nil {
+			fmt.Println(err)
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(`{"reason": "error"}`))
+			return
+		}
+	} else {
+		query = "select reaction from reactions where login=$1 and postId=$2"
+		var reaction bool
+		err = s.db.QueryRow(query, login, PostId).Scan(&reaction)
+		if err != nil {
+			fmt.Println(err)
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(`{"reason": "error"}`))
+			return
+		}
+		fmt.Println("reaction=", reaction)
+		if reaction {
+			query = "update reactions set reaction=false where login=$1 and postId=$2"
+			_, err = s.db.Exec(query, login, PostId)
+			if err != nil {
+				fmt.Println(5)
+				w.WriteHeader(http.StatusInternalServerError)
+				w.Write([]byte(`{"reason": "error"}`))
+				return
+			}
+			query = "select likes, dislikes from posts2 where id=$1"
+			rows, err := s.db.Query(query, PostId)
+			if err != nil {
+				fmt.Println(6)
+				w.WriteHeader(http.StatusInternalServerError)
+				w.Write([]byte(`{"reason": "error"}`))
+				return
+			}
+			countLikes := 0
+			countDislikes := 0
+			for rows.Next() {
+				rows.Scan(&countLikes, &countDislikes)
+			}
+			query = "update posts2 set likes=$1, dislikes=$2 where id=$3"
+			_, err = s.db.Exec(query, countLikes-1, countDislikes+1, PostId)
+			if err != nil {
+				fmt.Println(err)
 				w.WriteHeader(http.StatusInternalServerError)
 				w.Write([]byte(`{"reason": "error"}`))
 				return
