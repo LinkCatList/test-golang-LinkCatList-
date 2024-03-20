@@ -82,14 +82,16 @@ type Pagination struct {
 	Offset string `json:"paginationOffset"`
 }
 type Posts struct {
-	Content string   `json:"content"`
-	Tags    []string `json:"tags"`
+	Content   string   `json:"content"`
+	Tags      []string `json:"tags"`
+	VideoLink string   `json:"videoLink"`
 }
 type PostResponse struct {
 	Id            string   `json:"id"`
 	Content       string   `json:"content"`
 	Author        string   `json:"author"`
 	Tags          []string `json:"tags"`
+	VideoLink     string   `json:"videoLink"`
 	CreatedAt     string   `json:"createdAt"`
 	LikesCount    int      `json:"likesCount"`
 	DislikesCount int      `json:"dislikesCount"`
@@ -123,7 +125,7 @@ func (s *Server) Start() error {
 		fmt.Println(err4)
 	}
 
-	query = "create table if not exists posts2(id text, login text, content text, tags text[], createdAt text, likes int, dislikes int);"
+	query = "create table if not exists posts3(id text, login text, content text, tags text[], createdAt text, likes int, dislikes int, videoLink text);"
 	_, err4 = s.db.Exec(query)
 	if err4 != nil {
 		fmt.Println(err4)
@@ -1029,13 +1031,48 @@ func (s *Server) handleNewPost(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"reason": "error"}`))
 		return
 	}
+	// выгружаем из квери параметров данные поста (контент и теги)
 	var Post Posts
-	err = json.NewDecoder(r.Body).Decode(&Post)
+	queryParams := r.URL.Query()
+	Post.Content = queryParams.Get("content")
+	values, ok := queryParams["tags"]
+	if !ok {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"reason": "error"}`))
+		return
+	}
+	for _, val := range values {
+		Post.Tags = append(Post.Tags, val)
+	}
+
+	// -------------------------------------------
+	file, header, err := r.FormFile("video")
+	if err != nil {
+		fmt.Println(err)
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"reason": "error"}`))
+		return
+	}
+
+	hash := sha512.Sum512([]byte(header.Filename + login))
+	hashedPath := hex.EncodeToString(hash[:])
+
+	newFile, err := os.Create("./videos/" + hashedPath + ".webv")
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(`{"reason": "error"}`))
 		return
 	}
+	defer newFile.Close()
+	_, err = io.Copy(newFile, file)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"reason": "error"}`))
+		return
+	}
+
+	Post.VideoLink = "./videos/" + hashedPath + ".webv"
+	// -------------------------------------------------
 
 	currentTime := time.Now()
 	str, _ := currentTime.MarshalJSON()
@@ -1044,12 +1081,12 @@ func (s *Server) handleNewPost(w http.ResponseWriter, r *http.Request) {
 	str = []byte(string(rs))
 	rfc3339Time := string(str)[1 : len(str)-1]
 
-	hash := sha512.Sum512([]byte(string(rs) + Post.Content))
+	hash = sha512.Sum512([]byte(string(rs) + Post.Content))
 	hashedId := hex.EncodeToString(hash[:])
 
 	hashedId = hashedId[:90]
-	query := "insert into posts2 values ($1, $2, $3, $4, $5, 0, 0);"
-	_, err = s.db.Exec(query, hashedId, login, Post.Content, pq.Array(Post.Tags), rfc3339Time)
+	query := "insert into posts3 values ($1, $2, $3, $4, $5, 0, 0, $6);"
+	_, err = s.db.Exec(query, hashedId, login, Post.Content, pq.Array(Post.Tags), rfc3339Time, Post.VideoLink)
 	if err != nil {
 		fmt.Println(err)
 		w.WriteHeader(http.StatusInternalServerError)
@@ -1063,6 +1100,7 @@ func (s *Server) handleNewPost(w http.ResponseWriter, r *http.Request) {
 		Content:       Post.Content,
 		Author:        login,
 		Tags:          Post.Tags,
+		VideoLink:     Post.VideoLink,
 		CreatedAt:     rfc3339Time,
 		LikesCount:    0,
 		DislikesCount: 0,
@@ -1103,7 +1141,7 @@ func (s *Server) handleGetPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var exists bool
-	query := "select exists(select 1 from posts2 where id=$1)"
+	query := "select exists(select 1 from posts3 where id=$1)"
 	err228 := s.db.QueryRow(query, PostId).Scan(&exists)
 	if err228 != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -1114,7 +1152,7 @@ func (s *Server) handleGetPost(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"reason": "not found"}`))
 		return
 	}
-	query = "select * from posts2 where id=$1"
+	query = "select * from posts3 where id=$1"
 	rows, err := s.db.Query(query, PostId)
 	if err != nil {
 		fmt.Println(err)
@@ -1125,7 +1163,7 @@ func (s *Server) handleGetPost(w http.ResponseWriter, r *http.Request) {
 	var posts []PostResponse
 	for rows.Next() {
 		var post PostResponse
-		rows.Scan(&post.Id, &post.Author, &post.Content, pq.Array(&post.Tags), &post.CreatedAt, &post.LikesCount, &post.DislikesCount)
+		rows.Scan(&post.Id, &post.Author, &post.Content, pq.Array(&post.Tags), &post.CreatedAt, &post.LikesCount, &post.DislikesCount, &post.VideoLink)
 		posts = append(posts, post)
 	}
 
@@ -1221,7 +1259,7 @@ func (s *Server) handleGetMyFeed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	query := "select * from posts2 where login=$1 order by createdAt desc limit $2 offset $3"
+	query := "select * from posts3 where login=$1 order by createdAt desc limit $2 offset $3"
 	rows, err := s.db.Query(query, login, pagination.Limit, pagination.Offset)
 	if err != nil {
 		fmt.Println(err)
@@ -1232,7 +1270,7 @@ func (s *Server) handleGetMyFeed(w http.ResponseWriter, r *http.Request) {
 	var posts []PostResponse
 	for rows.Next() {
 		var post PostResponse
-		rows.Scan(&post.Id, &post.Author, &post.Content, pq.Array(&post.Tags), &post.CreatedAt, &post.LikesCount, &post.DislikesCount)
+		rows.Scan(&post.Id, &post.Author, &post.Content, pq.Array(&post.Tags), &post.CreatedAt, &post.LikesCount, &post.DislikesCount, &post.VideoLink)
 		posts = append(posts, post)
 	}
 	json.NewEncoder(w).Encode(posts)
@@ -1320,7 +1358,7 @@ func (s *Server) handleGetUserFeed(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"reason": "error"}`))
 		return
 	}
-	query = "select * from posts2 where login=$1 order by createdAt desc limit $2 offset $3"
+	query = "select * from posts3 where login=$1 order by createdAt desc limit $2 offset $3"
 	rows, err := s.db.Query(query, login, pagination.Limit, pagination.Offset)
 	if err != nil {
 		fmt.Println(err)
@@ -1396,10 +1434,11 @@ func (s *Server) handleLikePost(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"reason": "error"}`))
 		return
 	}
-	query := "select login from posts2 where id=$1"
+	query := "select login from posts3 where id=$1"
 	var UserLogin string
 	err = s.db.QueryRow(query, PostId).Scan(&UserLogin)
 	if err != nil {
+		fmt.Println(1)
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(`{"reason": "error"}`))
 		return
@@ -1409,6 +1448,7 @@ func (s *Server) handleLikePost(w http.ResponseWriter, r *http.Request) {
 	query = "select exists(select 1 from friends3 where login1=$1 and login2=$2)"
 	err228 := s.db.QueryRow(query, UserLogin, login).Scan(&exists)
 	if err228 != nil {
+		fmt.Println(2)
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(`{"reason": "error"}`))
 		return
@@ -1420,6 +1460,7 @@ func (s *Server) handleLikePost(w http.ResponseWriter, r *http.Request) {
 	var IsPublic bool
 	err = s.db.QueryRow(query, UserLogin).Scan(&IsPublic)
 	if err != nil {
+		fmt.Println(3)
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(`{"reason": "error"}`))
 		return
@@ -1430,9 +1471,10 @@ func (s *Server) handleLikePost(w http.ResponseWriter, r *http.Request) {
 	if UserLogin == login {
 		sperm = true
 	}
-	query = "select exists(select 1 from posts2 where id=$1)"
+	query = "select exists(select 1 from posts3 where id=$1)"
 	err228 = s.db.QueryRow(query, PostId).Scan(&exists)
 	if err228 != nil {
+		fmt.Println(4)
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(`{"reason": "error"}`))
 		return
@@ -1447,9 +1489,10 @@ func (s *Server) handleLikePost(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"reason": "error"}`))
 		return
 	}
-	query = "select exists(select 1 from reactions where login=$1)"
-	err228 = s.db.QueryRow(query, login).Scan(&exists)
+	query = "select exists(select 1 from reactions where login=$1 and postId=$2)"
+	err228 = s.db.QueryRow(query, login, PostId).Scan(&exists)
 	if err228 != nil {
+		fmt.Println(err228)
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(`{"reason": "error"}`))
 		return
@@ -1464,7 +1507,7 @@ func (s *Server) handleLikePost(w http.ResponseWriter, r *http.Request) {
 			w.Write([]byte(`{"reason": "error"}`))
 			return
 		}
-		query = "select likes, dislikes from posts2 where id=$1"
+		query = "select likes, dislikes from posts3 where id=$1"
 		rows, err := s.db.Query(query, PostId)
 		if err != nil {
 			fmt.Println(6)
@@ -1477,7 +1520,7 @@ func (s *Server) handleLikePost(w http.ResponseWriter, r *http.Request) {
 		for rows.Next() {
 			rows.Scan(&countLikes, &countDislikes)
 		}
-		query = "update posts2 set likes=$1 where id=$2"
+		query = "update posts3 set likes=$1 where id=$2"
 		_, err = s.db.Exec(query, countLikes+1, PostId)
 		if err != nil {
 			fmt.Println(err)
@@ -1504,7 +1547,7 @@ func (s *Server) handleLikePost(w http.ResponseWriter, r *http.Request) {
 				w.Write([]byte(`{"reason": "error"}`))
 				return
 			}
-			query = "select likes, dislikes from posts2 where id=$1"
+			query = "select likes, dislikes from posts3 where id=$1"
 			rows, err := s.db.Query(query, PostId)
 			if err != nil {
 				fmt.Println(6)
@@ -1517,7 +1560,7 @@ func (s *Server) handleLikePost(w http.ResponseWriter, r *http.Request) {
 			for rows.Next() {
 				rows.Scan(&countLikes, &countDislikes)
 			}
-			query = "update posts2 set likes=$1, dislikes=$2 where id=$3"
+			query = "update posts3 set likes=$1, dislikes=$2 where id=$3"
 			fmt.Println("ok")
 			_, err = s.db.Exec(query, countLikes+1, countDislikes-1, PostId)
 			if err != nil {
@@ -1563,7 +1606,7 @@ func (s *Server) handleDislikePost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	query := "select login from posts2 where id=$1"
+	query := "select login from posts3 where id=$1"
 	var UserLogin string
 	err = s.db.QueryRow(query, PostId).Scan(&UserLogin)
 	if err != nil {
@@ -1598,7 +1641,7 @@ func (s *Server) handleDislikePost(w http.ResponseWriter, r *http.Request) {
 	if UserLogin == login {
 		sperm = true
 	}
-	query = "select exists(select 1 from posts2 where id=$1)"
+	query = "select exists(select 1 from posts3 where id=$1)"
 	err228 = s.db.QueryRow(query, PostId).Scan(&exists)
 	if err228 != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -1615,8 +1658,8 @@ func (s *Server) handleDislikePost(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"reason": "error"}`))
 		return
 	}
-	query = "select exists(select 1 from reactions where login=$1)"
-	err228 = s.db.QueryRow(query, login).Scan(&exists)
+	query = "select exists(select 1 from reactions where login=$1 and postId=$2)"
+	err228 = s.db.QueryRow(query, login, PostId).Scan(&exists)
 	if err228 != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(`{"reason": "error"}`))
@@ -1632,7 +1675,7 @@ func (s *Server) handleDislikePost(w http.ResponseWriter, r *http.Request) {
 			w.Write([]byte(`{"reason": "error"}`))
 			return
 		}
-		query = "select likes, dislikes from posts2 where id=$1"
+		query = "select likes, dislikes from posts3 where id=$1"
 		rows, err := s.db.Query(query, PostId)
 		if err != nil {
 			fmt.Println(6)
@@ -1645,7 +1688,7 @@ func (s *Server) handleDislikePost(w http.ResponseWriter, r *http.Request) {
 		for rows.Next() {
 			rows.Scan(&countLikes, &countDislikes)
 		}
-		query = "update posts2 set dislikes=$1 where id=$2"
+		query = "update posts3 set dislikes=$1 where id=$2"
 		_, err = s.db.Exec(query, countDislikes+1, PostId)
 		if err != nil {
 			fmt.Println(err)
@@ -1673,7 +1716,7 @@ func (s *Server) handleDislikePost(w http.ResponseWriter, r *http.Request) {
 				w.Write([]byte(`{"reason": "error"}`))
 				return
 			}
-			query = "select likes, dislikes from posts2 where id=$1"
+			query = "select likes, dislikes from posts3 where id=$1"
 			rows, err := s.db.Query(query, PostId)
 			if err != nil {
 				fmt.Println(6)
@@ -1686,7 +1729,7 @@ func (s *Server) handleDislikePost(w http.ResponseWriter, r *http.Request) {
 			for rows.Next() {
 				rows.Scan(&countLikes, &countDislikes)
 			}
-			query = "update posts2 set likes=$1, dislikes=$2 where id=$3"
+			query = "update posts3 set likes=$1, dislikes=$2 where id=$3"
 			_, err = s.db.Exec(query, countLikes-1, countDislikes+1, PostId)
 			if err != nil {
 				fmt.Println(err)
