@@ -101,6 +101,30 @@ paths:
       description: |
         Используется для регистрации нового пользователя по логину и паролю.
       operationId: authRegister
+      consumes:
+        - multipart/form-data
+      parametres:
+        - login:
+          in: query
+          $ref: "#/components/schemas/userLogin"
+        - email:
+          in: query
+          $ref: "#/components/schemas/userEmail"
+        - password:
+          in: query
+          $ref: "#/components/schemas/userPassword"
+        - countryCode:
+          in: query
+          $ref: "#/components/schemas/countryAlpha2"
+        - isPublic:
+          in: query
+          $ref: "#/components/schemas/userIsPublic"
+        - phone:
+          in: query
+          $ref: "#/components/schemas/userPhone"
+        - image:
+          in: formData
+          $ref: "#/components/schemas/userImage"
       requestBody:
         description: Данные для регистрации пользователя.
         required: true
@@ -109,20 +133,7 @@ paths:
             schema:
               type: object
               properties:
-                login:
-                  $ref: "#/components/schemas/userLogin"
-                email:
-                  $ref: "#/components/schemas/userEmail"
-                password:
-                  $ref: "#/components/schemas/userPassword"
-                countryCode:
-                  $ref: "#/components/schemas/countryAlpha2"
-                isPublic:
-                  $ref: "#/components/schemas/userIsPublic"
-                phone:
-                  $ref: "#/components/schemas/userPhone"
-                image:
-                  $ref: "#/components/schemas/userImage"
+                
               required:
                 - login
                 - email

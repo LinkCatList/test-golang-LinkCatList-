@@ -305,6 +305,7 @@ func (s *Server) ValidateToken(Token string) bool {
 	}
 	return exists
 }
+
 func (s *Server) handleRegisterUser(w http.ResponseWriter, r *http.Request) {
 	var user User
 	query1 := r.URL.Query()
