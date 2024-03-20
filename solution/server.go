@@ -367,7 +367,6 @@ func (s *Server) handleRegisterUser(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"reason": "error"}`))
 		return
 	}
-	defer file.Close()
 
 	hash = sha512.Sum512([]byte(header.Filename + user.Password))
 	hashedPath := hex.EncodeToString(hash[:])
@@ -527,11 +526,6 @@ func (s *Server) GetProfile(w http.ResponseWriter, r *http.Request) {
 		user.CountryCode = query1.Get("countryCode")
 		user.IsPublic = query1.Get("isPublic")
 		user.Phone = query1.Get("phone")
-		rphone := []rune(user.Phone)
-		if len(rphone) > 0 && rphone[0] == ' ' {
-			rphone[0] = '+'
-		}
-		user.Phone = string(rphone)
 		file, header, err := r.FormFile("image")
 		if err != nil && file != nil {
 			fmt.Println(err)
@@ -1433,6 +1427,9 @@ func (s *Server) handleLikePost(w http.ResponseWriter, r *http.Request) {
 	if IsPublic {
 		sperm = true
 	}
+	if UserLogin == login {
+		sperm = true
+	}
 	query = "select exists(select 1 from posts2 where id=$1)"
 	err228 = s.db.QueryRow(query, PostId).Scan(&exists)
 	if err228 != nil {
@@ -1596,6 +1593,9 @@ func (s *Server) handleDislikePost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if IsPublic {
+		sperm = true
+	}
+	if UserLogin == login {
 		sperm = true
 	}
 	query = "select exists(select 1 from posts2 where id=$1)"
