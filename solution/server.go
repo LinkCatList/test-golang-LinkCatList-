@@ -5,6 +5,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/jpeg"
+	"image/png"
 	"io"
 	"log/slog"
 	"net/http"
@@ -14,10 +17,12 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/chai2010/webp"
 	"github.com/dgrijalva/jwt-go"
 	"github.com/gorilla/mux"
 	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
+	webpDecoder "golang.org/x/image/webp"
 )
 
 const signingKey = "14jf34gnv3n04j3v228"
@@ -297,6 +302,21 @@ func ValidatePhone(phone string) bool {
 func ValidateImgLink(imglink string) bool {
 	return len(imglink) == 0
 }
+
+// Функція для перевірки, чи відповідає файл формату WebP
+func isWebP(buffer []byte) bool {
+	return len(buffer) > 12 && buffer[8] == 'W' && buffer[9] == 'E' && buffer[10] == 'B' && buffer[11] == 'P'
+}
+
+// Функція для перевірки, чи відповідає файл формату JPEG
+func isJPEG(buffer []byte) bool {
+	return len(buffer) > 2 && buffer[0] == 0xFF && buffer[1] == 0xD8 && buffer[2] == 0xFF
+}
+
+// Функція для перевірки, чи відповідає файл формату PNG
+func isPNG(buffer []byte) bool {
+	return len(buffer) > 8 && buffer[0] == 0x89 && buffer[1] == 0x50 && buffer[2] == 0x4E && buffer[3] == 0x47 && buffer[4] == 0x0D && buffer[5] == 0x0A && buffer[6] == 0x1A && buffer[7] == 0x0A
+}
 func (s *Server) ValidateToken(Token string) bool {
 	var exists bool
 	query := "select exists(select 1 from tokens where token=$1)"
@@ -370,24 +390,81 @@ func (s *Server) handleRegisterUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	buffer := make([]byte, 512)
+	_, err = file.Read(buffer)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"reason": "error"}`))
+		return
+	}
+	// ファイルヘッダーを確認して、画像形式を決定します
+	// Проверяем заголовок файла для определения формата изображения
+	var format string
+	if isWebP(buffer) {
+		format = "WebP"
+	} else if isJPEG(buffer) {
+		format = "JPEG"
+	} else if isPNG(buffer) {
+		format = "PNG"
+	} else {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"reason": "error"}`))
+		return
+	}
+
+	_, err = file.Seek(0, 0)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"reason": "error"}`))
+		return
+	}
+
+	var uploadedPhoto image.Image
+
+	switch format {
+	case "WebP":
+		uploadedPhoto, err = webpDecoder.Decode(file)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(`{"reason": "error"}`))
+			return
+		}
+	case "JPEG":
+		uploadedPhoto, err = jpeg.Decode(file)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(`{"reason": "error"}`))
+			return
+		}
+	case "PNG":
+		uploadedPhoto, err = png.Decode(file)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(`{"reason": "error"}`))
+			return
+		}
+	default:
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"reason": "error"}`))
+		return
+	}
+
 	hash = sha512.Sum512([]byte(header.Filename + user.Password))
 	hashedPath := hex.EncodeToString(hash[:])
-
-	newFile, err := os.Create("./images/" + hashedPath + ".png")
+	newFile, err := os.Create("./images/" + hashedPath + ".webp")
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(`{"reason": "error"}`))
 		return
 	}
-	defer newFile.Close()
-	_, err = io.Copy(newFile, file)
+	err = webp.Encode(newFile, uploadedPhoto, &webp.Options{Lossless: true})
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(`{"reason": "error"}`))
 		return
 	}
 
-	user.Image = "./images/" + hashedPath + ".png"
+	user.Image = "./images/" + hashedPath + ".webp"
 	// -------------------------------------------------
 	fmt.Println(user.Login)
 	query = "insert into users5 values(default, $1, $2, $3, $4, $5, $6, $7);"
@@ -542,7 +619,7 @@ func (s *Server) GetProfile(w http.ResponseWriter, r *http.Request) {
 			defer file.Close()
 			hash := sha512.Sum512([]byte(header.Filename + user.Password))
 			hashedPath := hex.EncodeToString(hash[:])
-			newFile, err := os.Create("./images/" + hashedPath + ".png")
+			newFile, err := os.Create("./images/" + hashedPath + ".webp")
 			if err != nil {
 				w.WriteHeader(http.StatusInternalServerError)
 				w.Write([]byte(`{"reason": "error"}`))
@@ -555,7 +632,7 @@ func (s *Server) GetProfile(w http.ResponseWriter, r *http.Request) {
 				w.Write([]byte(`{"reason": "error"}`))
 				return
 			}
-			user.Image = "./images/" + hashedPath + ".png"
+			user.Image = "./images/" + hashedPath + ".webp"
 		}
 		if user.CountryCode != "" {
 			var exists bool
@@ -1739,4 +1816,33 @@ func (s *Server) handleDislikePost(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+}
+func (s *Server) handleGetAllTags(w http.ResponseWriter, r *http.Request) {
+	tokenString := r.Header.Get("Authorization")
+	if tokenString == "" {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"reason": "error"}`))
+		return
+	}
+	token, err := jwt.Parse(tokenString[7:], func(token *jwt.Token) (interface{}, error) {
+		return []byte(signingKey), nil
+	})
+	if err != nil || !token.Valid || !s.ValidateToken(tokenString[7:]) {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"reason": "error"}`))
+		return
+	}
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"reason": "error"}`))
+		return
+	}
+	_, ok = claims["login"].(string)
+	if !ok {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"reason": "error"}`))
+		return
+	}
+
 }
