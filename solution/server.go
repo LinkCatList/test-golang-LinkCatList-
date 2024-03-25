@@ -69,7 +69,6 @@ type TokenResponse struct {
 type TokenLogin struct {
 	Token string `json:"token"`
 	Login string `json:"login"`
-	// IsValid bool   `json:"isValid"`
 }
 type RequestChangePass struct {
 	OldPassword string `json:"oldPassword"`
@@ -149,7 +148,7 @@ func (s *Server) Start() error {
 	router.HandleFunc("/api/countries/{alpha2}", s.handleGetCountryByAlpha2).Methods("GET")
 	router.HandleFunc("/api/auth/register", s.handleRegisterUser).Methods("POST")
 	router.HandleFunc("/api/auth/sign-in", s.handleSignIn).Methods("POST")
-	router.HandleFunc("/api/me/profile", s.GetProfile)
+	router.HandleFunc("/api/me/profile", s.GetProfile).Methods("GET", "PATCH")
 	router.HandleFunc("/api/profiles/{login}", s.handleGetUserByLogin).Methods("GET")
 	router.HandleFunc("/api/me/updatePassword", s.handleUpdPassword).Methods("POST")
 	router.HandleFunc("/api/friends/add", s.handleFriendAdd).Methods("POST")
@@ -162,6 +161,7 @@ func (s *Server) Start() error {
 	router.HandleFunc("/api/posts/{postId}/like", s.handleLikePost).Methods("POST")
 	router.HandleFunc("/api/posts/{postId}/dislike", s.handleDislikePost).Methods("POST")
 	router.HandleFunc("/api/posts/{postId}/delete", s.handleDeletePost).Methods("POST")
+	router.HandleFunc("/api/search/posts", s.handleSearchBy).Methods("GET")
 
 	s.logger.Info("server has been started", "address", s.address)
 
@@ -1883,4 +1883,60 @@ func (s *Server) handleDeletePost(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"reason": "error"}`))
 		return
 	}
+}
+func (s *Server) handleSearchBy(w http.ResponseWriter, r *http.Request) {
+	tokenString := r.Header.Get("Authorization")
+	if tokenString == "" {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"reason": "error"}`))
+		return
+	}
+	token, err := jwt.Parse(tokenString[7:], func(token *jwt.Token) (interface{}, error) {
+		return []byte(signingKey), nil
+	})
+	if err != nil || !token.Valid || !s.ValidateToken(tokenString[7:]) {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"reason": "error"}`))
+		return
+	}
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"reason": "error"}`))
+		return
+	}
+	login, ok := claims["login"].(string)
+	if !ok {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"reason": "error"}`))
+		return
+	}
+	queryParams := r.URL.Query()
+	values, ok := queryParams["tags"]
+	if !ok {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"reason": "error"}`))
+		return
+	}
+	query := "select p.id, p.login, p.content, p.tags, p.createdAt, p.likes, p.dislikes, p.videoLink from posts3 p join users5 u on p.login=u.login left join friends3 f on(u.login=$1) where(f.login2 is not null or u.isPublic='true') and p.content like 'S%' and tags in("
+	for _, val := range values {
+		query += "array['#" + val + "'],"
+	}
+	query = query[:len(query)-1]
+	query += ")"
+	fmt.Println(query)
+	rows, err := s.db.Query(query, login)
+	if err != nil {
+		fmt.Println(err)
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"reason": "error"}`))
+		return
+	}
+	var Posts []PostResponse
+	for rows.Next() {
+		var Post PostResponse
+		rows.Scan(&Post.Id, &Post.Author, &Post.Content, pq.Array(&Post.Tags), &Post.CreatedAt, &Post.LikesCount, &Post.DislikesCount, &Post.VideoLink)
+		Posts = append(Posts, Post)
+	}
+	json.NewEncoder(w).Encode(Posts)
 }
