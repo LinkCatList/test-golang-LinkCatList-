@@ -100,6 +100,9 @@ type PostResponse struct {
 	LikesCount    int      `json:"likesCount"`
 	DislikesCount int      `json:"dislikesCount"`
 }
+type FindPrefix struct {
+	Prefix string `json:"prefix"`
+}
 
 func NewServer(address string, logger *slog.Logger, db *sqlx.DB) *Server {
 	return &Server{
@@ -1119,6 +1122,9 @@ func (s *Server) handleNewPost(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"reason": "error"}`))
 		return
 	}
+	sort.Slice(values, func(i, j int) bool {
+		return i < j
+	})
 	for _, val := range values {
 		Post.Tags = append(Post.Tags, val)
 	}
@@ -1911,6 +1917,13 @@ func (s *Server) handleSearchBy(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"reason": "error"}`))
 		return
 	}
+	var prefix FindPrefix
+	err = json.NewDecoder(r.Body).Decode(&prefix)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"reason": "error"}`))
+		return
+	}
 	queryParams := r.URL.Query()
 	values, ok := queryParams["tags"]
 	if !ok {
@@ -1918,7 +1931,10 @@ func (s *Server) handleSearchBy(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"reason": "error"}`))
 		return
 	}
-	query := "select p.id, p.login, p.content, p.tags, p.createdAt, p.likes, p.dislikes, p.videoLink from posts3 p join users5 u on p.login=u.login left join friends3 f on(u.login=$1) where(f.login2 is not null or u.isPublic='true') and p.content like 'S%' and tags in("
+	sort.Slice(values, func(i, j int) bool {
+		return i < j
+	})
+	query := "select p.id, p.login, p.content, p.tags, p.createdAt, p.likes, p.dislikes, p.videoLink from posts3 p join users5 u on p.login=u.login left join friends3 f on(u.login=$1) where(f.login2 is not null or u.isPublic='true') and p.content like '" + prefix.Prefix + "%' and tags in("
 	for _, val := range values {
 		query += "array['#" + val + "'],"
 	}
