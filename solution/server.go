@@ -161,6 +161,7 @@ func (s *Server) Start() error {
 	router.HandleFunc("/api/posts/feed/{login}", s.handleGetUserFeed).Methods("GET")
 	router.HandleFunc("/api/posts/{postId}/like", s.handleLikePost).Methods("POST")
 	router.HandleFunc("/api/posts/{postId}/dislike", s.handleDislikePost).Methods("POST")
+	router.HandleFunc("/api/posts/{postId}/delete", s.handleDeletePost).Methods("POST")
 
 	s.logger.Info("server has been started", "address", s.address)
 
@@ -1817,7 +1818,14 @@ func (s *Server) handleDislikePost(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 }
-func (s *Server) handleGetAllTags(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleDeletePost(w http.ResponseWriter, r *http.Request) {
+	PostId, ok := mux.Vars(r)["postId"]
+	if !ok {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"reason": "error"}`))
+		return
+	}
+
 	tokenString := r.Header.Get("Authorization")
 	if tokenString == "" {
 		w.WriteHeader(http.StatusUnauthorized)
@@ -1838,11 +1846,41 @@ func (s *Server) handleGetAllTags(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"reason": "error"}`))
 		return
 	}
-	_, ok = claims["login"].(string)
+	login, ok := claims["login"].(string)
 	if !ok {
 		w.WriteHeader(http.StatusUnauthorized)
 		w.Write([]byte(`{"reason": "error"}`))
 		return
 	}
 
+	query := "select login, videoLink from posts3 where id=$1"
+	var AuthorOfPost string
+	var Link string
+
+	err = s.db.QueryRow(query, PostId).Scan(&AuthorOfPost, &Link)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"reason": "error"}`))
+		return
+	}
+
+	if AuthorOfPost != login {
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(`{"reason": "error"}`))
+		return
+	}
+
+	query = "delete from posts3 where id=$1"
+	_, err = s.db.Exec(query, PostId)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"reason": "error"}`))
+		return
+	}
+	err = os.Remove(Link)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"reason": "error"}`))
+		return
+	}
 }
