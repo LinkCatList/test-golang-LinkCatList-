@@ -1934,13 +1934,13 @@ func (s *Server) handleSearchBy(w http.ResponseWriter, r *http.Request) {
 	sort.Slice(values, func(i, j int) bool {
 		return i < j
 	})
-	query := "select p.id, p.login, p.content, p.tags, p.createdAt, p.likes, p.dislikes, p.videoLink from posts3 p join users5 u on p.login=u.login left join friends3 f on(u.login=$1) where(f.login2 is not null or u.isPublic='true') and p.content like '" + prefix.Prefix + "%' and tags in("
+	query := "select p.id, p.login, p.content, p.tags, p.createdAt, p.likes, p.dislikes, p.videoLink from posts3 p join users5 u on p.login=u.login left join friends3 f on(u.login=$1) where(f.login2 is not null or u.isPublic='true') and p.content like '" + prefix.Prefix + "%' and tags @> array["
 	for _, val := range values {
-		query += "array['#" + val + "'],"
+		query += "'#" + val + "',"
 	}
 	query = query[:len(query)-1]
-	query += ")"
-	fmt.Println(query)
+	query += "]"
+	// fmt.Println(query)
 	rows, err := s.db.Query(query, login)
 	if err != nil {
 		fmt.Println(err)
