@@ -909,6 +909,11 @@ func (s *Server) handleFriendAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	login, ok := claims["login"].(string)
+	if !ok {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"reason": "error"}`))
+		return
+	}
 	var FriendLogin FiendRequest
 	err = json.NewDecoder(r.Body).Decode(&FriendLogin)
 	if err != nil {
