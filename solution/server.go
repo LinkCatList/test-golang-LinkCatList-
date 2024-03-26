@@ -774,11 +774,23 @@ func (s *Server) handleGetUserByLogin(w http.ResponseWriter, r *http.Request) {
 		row.Scan(&CurUser.Login, &CurUser.Email, &CurUser.CountryCode, &CurUser.IsPublic, &CurUser.Phone, &CurUser.Image)
 		user = append(user, CurUser)
 	}
+	query := "select exists(select 1 from friends3 where login1=$1 and login2=$2)"
+	var exists bool
+	err = s.db.QueryRow(query, loginInput, login).Scan(&exists)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"reason": "error"}`))
+		return
+	}
+
 	fmt.Println(login, loginInput)
 	if login == loginInput {
 		json.NewEncoder(w).Encode(user[0])
 		return
-	} else if user[0].IsPublic == "" {
+	} else if user[0].IsPublic == "true" {
+		json.NewEncoder(w).Encode(user[0])
+		return
+	} else if exists {
 		json.NewEncoder(w).Encode(user[0])
 		return
 	}
