@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"solution"
 	"sort"
 	"strconv"
 	"time"
@@ -32,77 +33,6 @@ type Server struct {
 	logger  *slog.Logger
 	db      *sqlx.DB
 }
-type Country struct {
-	Name   string `json:"name" db:"name"`
-	Alpha2 string `json:"alpha2" db:"alpha2"`
-	Alpha3 string `json:"alpha3" db:"alpha3"`
-	Region string `json:"region" db:"region"`
-}
-type User struct {
-	Login       string `json:"login"`
-	Email       string `json:"email"`
-	Password    string `json:"password"`
-	CountryCode string `json:"countryCode"`
-	IsPublic    string `json:"isPublic"`
-	Phone       string `json:"phone,omitempty"`
-	Image       string `json:"image,omitempty"`
-}
-type ResponseUser struct {
-	Login       string `json:"login"`
-	Email       string `json:"email"`
-	CountryCode string `json:"countryCode"`
-	IsPublic    string `json:"isPublic"`
-	Phone       string `json:"phone,omitempty"`
-	Image       string `json:"image,omitempty"`
-}
-type AuthUser struct {
-	Login    string `json:"login"`
-	Password string `json:"password"`
-}
-type TokenClaims struct {
-	jwt.StandardClaims
-	Login string `json:"login"`
-}
-type TokenResponse struct {
-	Token string `json:"token"`
-}
-type TokenLogin struct {
-	Token string `json:"token"`
-	Login string `json:"login"`
-}
-type RequestChangePass struct {
-	OldPassword string `json:"oldPassword"`
-	NewPassword string `json:"newPassword"`
-}
-type FiendRequest struct {
-	Login string `json:"login"`
-}
-type Friends struct {
-	Login2    string `json:"login" db:"login2"`
-	CreatedAt string `json:"addedAt"`
-}
-type Pagination struct {
-	Limit  string `json:"paginationLimit"`
-	Offset string `json:"paginationOffset"`
-}
-type Posts struct {
-	Content   string   `json:"content"`
-	Tags      []string `json:"tags"`
-	VideoLink string   `json:"videoLink"`
-}
-type PostResponse struct {
-	Id            string   `json:"id"`
-	Content       string   `json:"content"`
-	Author        string   `json:"author"`
-	Tags          []string `json:"tags"`
-	VideoLink     string   `json:"videoLink"`
-	CreatedAt     string   `json:"createdAt"`
-	LikesCount    int      `json:"likesCount"`
-	DislikesCount int      `json:"dislikesCount"`
-}
-type FindPrefix struct {
-	Prefix string `json:"prefix"`
-}
 
 func NewServer(address string, logger *slog.Logger, db *sqlx.DB) *Server {
 	return &Server{
@@ -113,36 +43,6 @@ func NewServer(address string, logger *slog.Logger, db *sqlx.DB) *Server {
 }
 
 func (s *Server) Start() error {
-	// таблица пользователей
-	query := "create table if not exists users5 (id serial, login text, password text, email text, countryCode text, isPublic text, phone text, image text);"
-	_, err4 := s.db.Exec(query)
-	if err4 != nil {
-		fmt.Println(err4)
-	}
-	// таблица действительных на текущий момент токенов
-	query = "create table if not exists tokens (token text, login text);"
-	_, err4 = s.db.Exec(query)
-	if err4 != nil {
-		fmt.Println(err4)
-	}
-	// таблица связей друзей (не половых)
-	query = "create table if not exists friends3(login1 text, login2 text, createdAt timestamptz);"
-	_, err4 = s.db.Exec(query)
-	if err4 != nil {
-		fmt.Println(err4)
-	}
-
-	query = "create table if not exists posts3(id text, login text, content text, tags text[], createdAt text, likes int, dislikes int, videoLink text);"
-	_, err4 = s.db.Exec(query)
-	if err4 != nil {
-		fmt.Println(err4)
-	}
-	// таблица лайков/дизлайков, 0 - дизлайк, 1 - лайк
-	query = "create table if not exists reactions(login text, postId text, reaction boolean);"
-	_, err4 = s.db.Exec(query)
-	if err4 != nil {
-		fmt.Println(err4)
-	}
 
 	router := mux.NewRouter()
 
@@ -193,7 +93,7 @@ func (s *Server) handleGetAllCountries(w http.ResponseWriter, r *http.Request) {
 	}
 	//fmt.Println(region)
 	if len(region) == 0 {
-		var countries_list []Country
+		var countries_list []solution.Country
 		q := "select name, alpha2, alpha3, region from countries"
 		rows, err := s.db.Query(q)
 		if err != nil {
@@ -205,11 +105,11 @@ func (s *Server) handleGetAllCountries(w http.ResponseWriter, r *http.Request) {
 		for rows.Next() {
 			var name, alpha2, alpha3, region string
 			rows.Scan(&name, &alpha2, &alpha3, &region)
-			countries_list = append(countries_list, Country{Name: name, Alpha2: alpha2, Alpha3: alpha3, Region: region})
+			countries_list = append(countries_list, solution.Country{Name: name, Alpha2: alpha2, Alpha3: alpha3, Region: region})
 		}
 		json.NewEncoder(w).Encode(countries_list)
 	} else {
-		var countries_list []Country
+		var countries_list []solution.Country
 		q := "select name, alpha2, alpha3, region from countries where region in("
 		for i, value := range region {
 			if i > 0 {
@@ -226,7 +126,7 @@ func (s *Server) handleGetAllCountries(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for rows.Next() {
-			var s Country
+			var s solution.Country
 			rows.Scan(&s.Name, &s.Alpha2, &s.Alpha3, &s.Region)
 			countries_list = append(countries_list, s)
 		}
@@ -243,7 +143,7 @@ func (s *Server) handleGetCountryByAlpha2(w http.ResponseWriter, r *http.Request
 		w.Write([]byte(`{"reason": "error"}`))
 		return
 	}
-	var country Country
+	var country solution.Country
 	err := s.db.QueryRow("select name, alpha2, alpha3, region from countries where alpha2=$1", alpha2).Scan(&country.Name, &country.Alpha2, &country.Alpha3, &country.Region)
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
@@ -333,7 +233,7 @@ func (s *Server) ValidateToken(Token string) bool {
 }
 
 func (s *Server) handleRegisterUser(w http.ResponseWriter, r *http.Request) {
-	var user User
+	var user solution.User
 	query1 := r.URL.Query()
 	user.Login = query1.Get("login")
 	user.Email = query1.Get("email")
@@ -359,6 +259,9 @@ func (s *Server) handleRegisterUser(w http.ResponseWriter, r *http.Request) {
 	err228 := s.db.QueryRow(query, user.Login).Scan(&exists)
 	if err228 != nil {
 		fmt.Println("error while check")
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"reason": "error"}`))
+		return
 	}
 	if exists {
 		w.WriteHeader(http.StatusConflict)
@@ -369,6 +272,9 @@ func (s *Server) handleRegisterUser(w http.ResponseWriter, r *http.Request) {
 	err228 = s.db.QueryRow(query, user.Email).Scan(&exists)
 	if err228 != nil {
 		fmt.Println("error while check")
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"reason": "error"}`))
+		return
 	}
 	if exists {
 		w.WriteHeader(http.StatusConflict)
@@ -476,7 +382,7 @@ func (s *Server) handleRegisterUser(w http.ResponseWriter, r *http.Request) {
 	if err2 != nil {
 		fmt.Println("error while insert into db", err2)
 	}
-	ans := ResponseUser{
+	ans := solution.ResponseUser{
 		Login:       user.Login,
 		Email:       user.Email,
 		CountryCode: user.CountryCode,
@@ -490,12 +396,12 @@ func (s *Server) handleRegisterUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) generateToken(login string) (string, error) {
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, &TokenClaims{
-		jwt.StandardClaims{
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, &solution.TokenClaims{
+		StandardClaims: jwt.StandardClaims{
 			ExpiresAt: time.Now().Add(12 * time.Hour).Unix(), // токен валиден в течение 12 часов
 			IssuedAt:  time.Now().Unix(),
 		},
-		login,
+		Login: login,
 	})
 	ResToken, err := token.SignedString([]byte(signingKey))
 	query := "insert into tokens (token, login) values($1, $2)"
@@ -507,7 +413,7 @@ func (s *Server) generateToken(login string) (string, error) {
 	return ResToken, err
 }
 func (s *Server) handleSignIn(w http.ResponseWriter, r *http.Request) {
-	var user AuthUser
+	var user solution.AuthUser
 	err := json.NewDecoder(r.Body).Decode(&user)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -548,7 +454,7 @@ func (s *Server) handleSignIn(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(`{"reason": "error while create token"}`))
 	}
-	Rtoken := TokenResponse{
+	Rtoken := solution.TokenResponse{
 		Token: token,
 	}
 	TokenJson, _ := json.Marshal(Rtoken)
@@ -585,7 +491,7 @@ func (s *Server) GetProfile(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
-		var users []ResponseUser
+		var users []solution.ResponseUser
 		// user.Login = login
 		q := "select login, email, countryCode, isPublic, phone, image from users5 where login=$1"
 		row, err2 := s.db.Query(q, login)
@@ -595,7 +501,7 @@ func (s *Server) GetProfile(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for row.Next() {
-			var user ResponseUser
+			var user solution.ResponseUser
 			row.Scan(&user.Login, &user.Email, &user.CountryCode, &user.IsPublic, &user.Phone, &user.Image)
 			users = append(users, user)
 		}
@@ -604,7 +510,7 @@ func (s *Server) GetProfile(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(TokenJson))
 	case http.MethodPatch:
-		var user User
+		var user solution.User
 		query1 := r.URL.Query()
 		user.CountryCode = query1.Get("countryCode")
 		user.IsPublic = query1.Get("isPublic")
@@ -708,7 +614,7 @@ func (s *Server) GetProfile(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		var users []ResponseUser
+		var users []solution.ResponseUser
 		q := "select login, email, countryCode, isPublic, phone, image from users5 where login=$1"
 		row, err2 := s.db.Query(q, login)
 		if err2 != nil {
@@ -717,7 +623,7 @@ func (s *Server) GetProfile(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for row.Next() {
-			var user ResponseUser
+			var user solution.ResponseUser
 			row.Scan(&user.Login, &user.Email, &user.CountryCode, &user.IsPublic, &user.Phone, &user.Image)
 			users = append(users, user)
 		}
@@ -761,7 +667,7 @@ func (s *Server) handleGetUserByLogin(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"reason": "error"}`))
 		return
 	}
-	var user []ResponseUser
+	var user []solution.ResponseUser
 	q := "select login, email, countryCode, isPublic, phone, image from users5 where login=$1"
 	row, err1 := s.db.Query(q, loginInput)
 	if err1 != nil {
@@ -770,7 +676,7 @@ func (s *Server) handleGetUserByLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for row.Next() {
-		var CurUser ResponseUser
+		var CurUser solution.ResponseUser
 		row.Scan(&CurUser.Login, &CurUser.Email, &CurUser.CountryCode, &CurUser.IsPublic, &CurUser.Phone, &CurUser.Image)
 		user = append(user, CurUser)
 	}
@@ -849,7 +755,7 @@ func (s *Server) handleUpdPassword(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"reason": "error"}`))
 		return
 	}
-	var RCP RequestChangePass
+	var RCP solution.RequestChangePass
 	err4 := json.NewDecoder(r.Body).Decode(&RCP)
 	if err4 != nil {
 		// fmt.Println(5)
@@ -914,7 +820,7 @@ func (s *Server) handleFriendAdd(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"reason": "error"}`))
 		return
 	}
-	var FriendLogin FiendRequest
+	var FriendLogin solution.FiendRequest
 	err = json.NewDecoder(r.Body).Decode(&FriendLogin)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -992,7 +898,7 @@ func (s *Server) handleGetFriends(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	var pagination Pagination
+	var pagination solution.Pagination
 	pagination.Limit = q.Get("paginationLimit")
 	pagination.Offset = q.Get("paginationOffset")
 	if pagination.Offset == "" {
@@ -1032,9 +938,9 @@ func (s *Server) handleGetFriends(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"reason": "error"}`))
 		return
 	}
-	var friends []Friends
+	var friends []solution.Friends
 	for row.Next() {
-		var friend Friends
+		var friend solution.Friends
 		row.Scan(&friend.Login2, &friend.CreatedAt)
 		sr := []rune(friend.CreatedAt)
 		sr[len(sr)-6] = 'Z'
@@ -1070,7 +976,7 @@ func (s *Server) handleRemoveFriend(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"reason": "error"}`))
 		return
 	}
-	var FriendLogin FiendRequest
+	var FriendLogin solution.FiendRequest
 	err = json.NewDecoder(r.Body).Decode(&FriendLogin)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -1130,7 +1036,7 @@ func (s *Server) handleNewPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// выгружаем из квери параметров данные поста (контент и теги)
-	var Post Posts
+	var Post solution.Posts
 	queryParams := r.URL.Query()
 	Post.Content = queryParams.Get("content")
 	values, ok := queryParams["tags"]
@@ -1196,7 +1102,7 @@ func (s *Server) handleNewPost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	fmt.Println(rfc3339Time)
-	RPost := PostResponse{
+	RPost := solution.PostResponse{
 		Id:            hashedId,
 		Content:       Post.Content,
 		Author:        login,
@@ -1261,9 +1167,9 @@ func (s *Server) handleGetPost(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"reason": "error"}`))
 		return
 	}
-	var posts []PostResponse
+	var posts []solution.PostResponse
 	for rows.Next() {
-		var post PostResponse
+		var post solution.PostResponse
 		rows.Scan(&post.Id, &post.Author, &post.Content, pq.Array(&post.Tags), &post.CreatedAt, &post.LikesCount, &post.DislikesCount, &post.VideoLink)
 		posts = append(posts, post)
 	}
@@ -1328,7 +1234,7 @@ func (s *Server) handleGetMyFeed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	var pagination Pagination
+	var pagination solution.Pagination
 	pagination.Limit = q.Get("paginationLimit")
 	pagination.Offset = q.Get("paginationOffset")
 	if pagination.Offset == "" {
@@ -1368,9 +1274,9 @@ func (s *Server) handleGetMyFeed(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"reason": "error"}`))
 		return
 	}
-	var posts []PostResponse
+	var posts []solution.PostResponse
 	for rows.Next() {
-		var post PostResponse
+		var post solution.PostResponse
 		rows.Scan(&post.Id, &post.Author, &post.Content, pq.Array(&post.Tags), &post.CreatedAt, &post.LikesCount, &post.DislikesCount, &post.VideoLink)
 		posts = append(posts, post)
 	}
@@ -1404,7 +1310,7 @@ func (s *Server) handleGetUserFeed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	var pagination Pagination
+	var pagination solution.Pagination
 	pagination.Limit = q.Get("paginationLimit")
 	pagination.Offset = q.Get("paginationOffset")
 	if pagination.Offset == "" {
@@ -1435,7 +1341,7 @@ func (s *Server) handleGetUserFeed(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"reason": "error"}`))
 		return
 	}
-	var user FiendRequest
+	var user solution.FiendRequest
 	user.Login, ok = mux.Vars(r)["login"]
 	if !ok {
 		fmt.Println(ok)
@@ -1467,9 +1373,9 @@ func (s *Server) handleGetUserFeed(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"reason": "error"}`))
 		return
 	}
-	var posts []PostResponse
+	var posts []solution.PostResponse
 	for rows.Next() {
-		var post PostResponse
+		var post solution.PostResponse
 		rows.Scan(&post.Id, &post.Author, &post.Content, pq.Array(&post.Tags), &post.CreatedAt, &post.LikesCount, &post.DislikesCount)
 		posts = append(posts, post)
 	}
@@ -1934,7 +1840,7 @@ func (s *Server) handleSearchBy(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"reason": "error"}`))
 		return
 	}
-	var prefix FindPrefix
+	var prefix solution.FindPrefix
 	err = json.NewDecoder(r.Body).Decode(&prefix)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -1965,9 +1871,9 @@ func (s *Server) handleSearchBy(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"reason": "error"}`))
 		return
 	}
-	var Posts []PostResponse
+	var Posts []solution.PostResponse
 	for rows.Next() {
-		var Post PostResponse
+		var Post solution.PostResponse
 		rows.Scan(&Post.Id, &Post.Author, &Post.Content, pq.Array(&Post.Tags), &Post.CreatedAt, &Post.LikesCount, &Post.DislikesCount, &Post.VideoLink)
 		Posts = append(Posts, Post)
 	}
