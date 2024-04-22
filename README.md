@@ -125,3 +125,13 @@ INSERT INTO countries (name, alpha2, alpha3, region) VALUES
 
 ### /posts/search
 Предоставляет возможность поиска постов по префиксу и тегам. Поиск осуществляется только по тем постам, к которым есть доступ.
+
+
+## Start server 🍉
+```
+cd solution/cmd
+systemctl start docker
+sudo docker run --name=video-db -e POSTGRES_PASSWORD='qwerty' -p 1337:5432 -d --rm postgres
+migrate -path ../migration -database 'postgres://postgres:qwerty@localhost:1337/postgres?sslmode=disable' up
+go run main.go server.go
+```
